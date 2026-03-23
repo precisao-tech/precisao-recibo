@@ -15,8 +15,7 @@ import io.swagger.v3.oas.annotations.servers.Server;
                 license = @License(name = "Apache 2.0", url = "https://www.apache.org/licenses/LICENSE-2.0")
         ),
         servers = {
-                @Server(url = "http://localhost:8080", description = "Servidor local"),
-                @Server(url = "https://informative-projected-extending-warriors.trycloudflare.com", description = "Servidor EC2 via Cloudflare Tunnel (HTTPS)")
+                @Server(url = "/", description = "Servidor atual")
         }
 )
 public class OpenApiConfig {
