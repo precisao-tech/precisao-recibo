@@ -11,10 +11,17 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
-import jakarta.mail.Transport;
-import jakarta.mail.Authenticator;
-import jakarta.mail.PasswordAuthentication;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.SdkBytes;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.ses.SesClient;
+import software.amazon.awssdk.services.ses.model.RawMessage;
+import software.amazon.awssdk.services.ses.model.SendRawEmailRequest;
+import software.amazon.awssdk.services.ses.model.SesException;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
@@ -31,47 +38,45 @@ import java.util.UUID;
 public class EmailService {
 
     private final Session mailSession;
+    private final SesClient sesClient;
     private final String emailRemetente;
     private final String nomeRemetente;
 
     public EmailService(
-            @Value("${spring.mail.host}") String smtpHost,
-            @Value("${spring.mail.port}") int smtpPort,
-            @Value("${spring.mail.username}") String smtpUsername,
-            @Value("${spring.mail.password}") String smtpPassword,
+            @Value("${aws.region:us-east-2}") String awsRegion,
+            @Value("${aws.access-key-id:}") String awsAccessKeyId,
+            @Value("${aws.secret-access-key:}") String awsSecretAccessKey,
             @Value("${app.email.remetente}") String emailRemetente,
             @Value("${app.email.nome-remetente}") String nomeRemetente) {
-        
+
         this.emailRemetente = emailRemetente;
         this.nomeRemetente = nomeRemetente;
-        
-        System.out.println("Configurando SMTP Gmail: " + smtpHost + ":" + smtpPort);
+
+        System.out.println("Configurando envio via AWS SES API. Região: " + awsRegion);
         System.out.println("Email remetente: " + this.emailRemetente);
-        
-        // Configura propriedades SMTP do Gmail
-        Properties props = new Properties();
-        props.put("mail.smtp.host", smtpHost);
-        props.put("mail.smtp.port", String.valueOf(smtpPort));
-        props.put("mail.smtp.auth", "true");
-        props.put("mail.smtp.starttls.enable", "true");
-        props.put("mail.smtp.starttls.required", "true");
-        props.put("mail.smtp.connectiontimeout", "5000");
-        props.put("mail.smtp.timeout", "5000");
-        props.put("mail.smtp.writetimeout", "5000");
-        props.put("mail.smtp.ssl.trust", smtpHost);
-        
-        // Cria autenticador para SMTP
-        Authenticator authenticator = new Authenticator() {
-            @Override
-            protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(smtpUsername, smtpPassword);
-            }
-        };
-        
-        // Cria sessão de email
-        this.mailSession = Session.getInstance(props, authenticator);
-        
-        System.out.println("Sessão SMTP Gmail configurada com sucesso!");
+
+        this.sesClient = criarSesClient(awsRegion, awsAccessKeyId, awsSecretAccessKey);
+        this.mailSession = Session.getInstance(new Properties());
+        System.out.println("Cliente AWS SES configurado com sucesso!");
+    }
+
+    private SesClient criarSesClient(String awsRegion, String awsAccessKeyId, String awsSecretAccessKey) {
+        var builder = SesClient.builder().region(Region.of(awsRegion));
+
+        if (awsAccessKeyId != null && !awsAccessKeyId.isBlank()
+                && awsSecretAccessKey != null && !awsSecretAccessKey.isBlank()) {
+            builder.credentialsProvider(
+                    StaticCredentialsProvider.create(
+                            AwsBasicCredentials.create(awsAccessKeyId, awsSecretAccessKey)
+                    )
+            );
+            System.out.println("AWS SES usando credenciais explícitas via configuração.");
+        } else {
+            builder.credentialsProvider(DefaultCredentialsProvider.create());
+            System.out.println("AWS SES usando cadeia padrão de credenciais (IAM Role/Env).");
+        }
+
+        return builder.build();
     }
 
     public void enviarReciboEmail(
@@ -182,7 +187,7 @@ public class EmailService {
             System.out.println("=== ENVIANDO EMAIL PRINCIPAL ===");
             System.out.println("Destinatário: " + emailCentralPagamentos);
             System.out.println("Assunto: " + assunto);
-            System.out.println("Tentando enviar email principal para central de pagamentos usando SMTP Gmail...");
+            System.out.println("Tentando enviar email principal para central de pagamentos via AWS SES API...");
             
             // Cria mensagem MIME - email principal vai apenas para central de pagamentos (sem CC)
             MimeMessage message = criarMensagemComAnexo(
@@ -206,7 +211,7 @@ public class EmailService {
                 System.out.println("BCC confirmado no MimeMessage: " + bccAddresses[0].toString());
             }
             
-            // Envia via SMTP Gmail
+            // Envia via AWS SES API
             enviarViaSmtp(message);
             System.out.println("Email principal enviado com sucesso para: " + emailCentralPagamentos);
             System.out.println("=== FIM ENVIO EMAIL PRINCIPAL ===");
@@ -372,7 +377,7 @@ public class EmailService {
             System.out.println("Destinatário: " + emailCentralPagamentos);
             System.out.println("Assunto: " + assunto);
             System.out.println("Número de anexos: " + pdfsRecibos.size());
-            System.out.println("Tentando enviar email com múltiplos anexos para central de pagamentos usando SMTP Gmail...");
+            System.out.println("Tentando enviar email com múltiplos anexos para central de pagamentos via AWS SES API...");
             
             // Cria mensagem MIME com múltiplos anexos - email principal vai apenas para central de pagamentos (sem CC)
             MimeMessage message = criarMensagemComMultiplosAnexos(
@@ -395,7 +400,7 @@ public class EmailService {
                 System.out.println("BCC confirmado no MimeMessage: " + bccAddresses[0].toString());
             }
             
-            // Envia via SMTP Gmail
+            // Envia via AWS SES API
             enviarViaSmtp(message);
             System.out.println("Email com múltiplos anexos enviado com sucesso para: " + emailCentralPagamentos);
             System.out.println("=== FIM ENVIO EMAIL PRINCIPAL (MÚLTIPLOS ANEXOS) ===");
@@ -678,20 +683,36 @@ public class EmailService {
             // Log do destinatário antes de enviar
             jakarta.mail.Address[] toAddresses = message.getRecipients(jakarta.mail.Message.RecipientType.TO);
             if (toAddresses != null && toAddresses.length > 0) {
-                System.out.println("Enviando email via SMTP Gmail para: " + toAddresses[0].toString());
+                System.out.println("Enviando email via AWS SES API para: " + toAddresses[0].toString());
             }
-            
-            // Envia email via SMTP
-            Transport.send(message);
-            System.out.println("Email enviado com sucesso via SMTP Gmail!");
-            
-        } catch (jakarta.mail.MessagingException e) {
-            System.err.println("Erro ao enviar email via SMTP: " + e.getMessage());
-            throw new MessagingException("Erro ao enviar email via SMTP: " + e.getMessage(), e);
+
+            message.saveChanges();
+            try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                message.writeTo(outputStream);
+
+                SendRawEmailRequest request = SendRawEmailRequest.builder()
+                        .rawMessage(
+                                RawMessage.builder()
+                                        .data(SdkBytes.fromByteArray(outputStream.toByteArray()))
+                                        .build()
+                        )
+                        .build();
+
+                sesClient.sendRawEmail(request);
+            }
+
+            System.out.println("Email enviado com sucesso via AWS SES API!");
+
+        } catch (SesException e) {
+            System.err.println("Erro ao enviar email via AWS SES API: " + e.awsErrorDetails().errorMessage());
+            throw new MessagingException("Erro ao enviar email via AWS SES API: " + e.awsErrorDetails().errorMessage(), e);
+        } catch (jakarta.mail.MessagingException | IOException e) {
+            System.err.println("Erro ao preparar email para AWS SES API: " + e.getMessage());
+            throw new MessagingException("Erro ao preparar email para AWS SES API: " + e.getMessage(), e);
         } catch (Exception e) {
-            System.err.println("Erro ao enviar via SMTP Gmail: " + e.getMessage());
+            System.err.println("Erro ao enviar via AWS SES API: " + e.getMessage());
             e.printStackTrace();
-            throw new MessagingException("Erro ao enviar via SMTP Gmail: " + e.getMessage(), e);
+            throw new MessagingException("Erro ao enviar via AWS SES API: " + e.getMessage(), e);
         }
     }
 
