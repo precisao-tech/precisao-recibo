@@ -14,7 +14,7 @@ public record EnviarReciboEmailRequest(
             throw new IllegalArgumentException("Dados do recibo são obrigatórios");
         }
         if (assunto == null || assunto.isBlank()) {
-            assunto = "Recibo de Pagamento - Pró-Labore";
+            assunto = "Recibo Eletronico - Pró-Labore";
         }
     }
 }

@@ -2,7 +2,7 @@
 <html xmlns="http://www.w3.org/1999/xhtml" lang="pt-BR">
 <head>
     <meta charset="UTF-8"/>
-    <title>Recibo de Pagamento</title>
+    <title>{{PDF_TITULO_DOCUMENTO}}</title>
     <style>
         @page {
             size: A4;
@@ -184,13 +184,13 @@
             <div class="logo-container{{LOGO_STYLE}}">
                 <img src="{{LOGO_BASE64}}" alt="Logo Precisão" />
             </div>
-            <h1>RECIBO DE PAGAMENTO</h1>
+            <h1>{{PDF_TITULO_MAIUSCULO}}</h1>
         </div>
 
         <!-- Linha com PRO-LABORE e Data de Vencimento -->
         <table>
             <tr>
-                <td class="row-header" style="width: 70%;">RECIBO DE PAGAMENTO</td>
+                <td class="row-header" style="width: 70%;">{{PDF_TITULO_MAIUSCULO}}</td>
                 <td class="row-header text-center" style="width: 15%;">Data de Vencimento</td>
                 <td class="text-center" style="width: 15%;">{{DATA_VENCIMENTO}}</td>
             </tr>

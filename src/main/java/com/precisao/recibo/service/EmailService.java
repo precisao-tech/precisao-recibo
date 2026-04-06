@@ -8,11 +8,12 @@ import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.mail.MailException;
+import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StreamUtils;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.regions.Region;
@@ -39,6 +40,8 @@ public class EmailService {
 
     private final Session mailSession;
     private final SesClient sesClient;
+    private final JavaMailSender javaMailSender;
+    private final boolean sesAtivo;
     private final String emailRemetente;
     private final String nomeRemetente;
 
@@ -47,34 +50,39 @@ public class EmailService {
             @Value("${aws.access-key-id:}") String awsAccessKeyId,
             @Value("${aws.secret-access-key:}") String awsSecretAccessKey,
             @Value("${app.email.remetente}") String emailRemetente,
-            @Value("${app.email.nome-remetente}") String nomeRemetente) {
+            @Value("${app.email.nome-remetente}") String nomeRemetente,
+            JavaMailSender javaMailSender) {
 
         this.emailRemetente = emailRemetente;
         this.nomeRemetente = nomeRemetente;
+        this.javaMailSender = javaMailSender;
 
-        System.out.println("Configurando envio via AWS SES API. Região: " + awsRegion);
+        boolean credenciaisPresentes = awsAccessKeyId != null && !awsAccessKeyId.isBlank()
+                && awsSecretAccessKey != null && !awsSecretAccessKey.isBlank();
+        this.sesAtivo = credenciaisPresentes;
+
+        if (sesAtivo) {
+            System.out.println("Modo de envio: AWS SES API. Região: " + awsRegion);
+            this.sesClient = criarSesClient(awsRegion, awsAccessKeyId, awsSecretAccessKey);
+            this.mailSession = Session.getInstance(new Properties());
+            System.out.println("Cliente AWS SES configurado com sucesso!");
+        } else {
+            System.out.println("Credenciais AWS não configuradas. Modo de envio: SMTP via JavaMailSender.");
+            this.sesClient = null;
+            this.mailSession = javaMailSender.createMimeMessage().getSession();
+        }
         System.out.println("Email remetente: " + this.emailRemetente);
-
-        this.sesClient = criarSesClient(awsRegion, awsAccessKeyId, awsSecretAccessKey);
-        this.mailSession = Session.getInstance(new Properties());
-        System.out.println("Cliente AWS SES configurado com sucesso!");
     }
 
     private SesClient criarSesClient(String awsRegion, String awsAccessKeyId, String awsSecretAccessKey) {
         var builder = SesClient.builder().region(Region.of(awsRegion));
 
-        if (awsAccessKeyId != null && !awsAccessKeyId.isBlank()
-                && awsSecretAccessKey != null && !awsSecretAccessKey.isBlank()) {
-            builder.credentialsProvider(
-                    StaticCredentialsProvider.create(
-                            AwsBasicCredentials.create(awsAccessKeyId, awsSecretAccessKey)
-                    )
-            );
-            System.out.println("AWS SES usando credenciais explícitas via configuração.");
-        } else {
-            builder.credentialsProvider(DefaultCredentialsProvider.create());
-            System.out.println("AWS SES usando cadeia padrão de credenciais (IAM Role/Env).");
-        }
+        builder.credentialsProvider(
+                StaticCredentialsProvider.create(
+                        AwsBasicCredentials.create(awsAccessKeyId, awsSecretAccessKey)
+                )
+        );
+        System.out.println("AWS SES usando credenciais explícitas via configuração.");
 
         return builder.build();
     }
@@ -679,40 +687,40 @@ public class EmailService {
     }
 
     private void enviarViaSmtp(MimeMessage message) throws MessagingException {
-        try {
-            // Log do destinatário antes de enviar
-            jakarta.mail.Address[] toAddresses = message.getRecipients(jakarta.mail.Message.RecipientType.TO);
-            if (toAddresses != null && toAddresses.length > 0) {
-                System.out.println("Enviando email via AWS SES API para: " + toAddresses[0].toString());
+        jakarta.mail.Address[] toAddresses = message.getRecipients(jakarta.mail.Message.RecipientType.TO);
+        String destinatarioLog = (toAddresses != null && toAddresses.length > 0)
+                ? toAddresses[0].toString() : "desconhecido";
+
+        if (sesAtivo) {
+            try {
+                System.out.println("Enviando email via AWS SES API para: " + destinatarioLog);
+                message.saveChanges();
+                try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+                    message.writeTo(outputStream);
+                    SendRawEmailRequest request = SendRawEmailRequest.builder()
+                            .rawMessage(RawMessage.builder()
+                                    .data(SdkBytes.fromByteArray(outputStream.toByteArray()))
+                                    .build())
+                            .build();
+                    sesClient.sendRawEmail(request);
+                }
+                System.out.println("Email enviado com sucesso via AWS SES API!");
+            } catch (SesException e) {
+                System.err.println("Erro AWS SES: " + e.awsErrorDetails().errorMessage());
+                throw new MessagingException("Erro ao enviar via AWS SES: " + e.awsErrorDetails().errorMessage(), e);
+            } catch (IOException | jakarta.mail.MessagingException e) {
+                System.err.println("Erro ao preparar mensagem para AWS SES: " + e.getMessage());
+                throw new MessagingException("Erro ao preparar mensagem: " + e.getMessage(), e);
             }
-
-            message.saveChanges();
-            try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
-                message.writeTo(outputStream);
-
-                SendRawEmailRequest request = SendRawEmailRequest.builder()
-                        .rawMessage(
-                                RawMessage.builder()
-                                        .data(SdkBytes.fromByteArray(outputStream.toByteArray()))
-                                        .build()
-                        )
-                        .build();
-
-                sesClient.sendRawEmail(request);
+        } else {
+            try {
+                System.out.println("Enviando email via SMTP (JavaMailSender) para: " + destinatarioLog);
+                javaMailSender.send(message);
+                System.out.println("Email enviado com sucesso via SMTP!");
+            } catch (MailException e) {
+                System.err.println("Erro ao enviar via SMTP: " + e.getMessage());
+                throw new MessagingException("Erro ao enviar via SMTP: " + e.getMessage(), e);
             }
-
-            System.out.println("Email enviado com sucesso via AWS SES API!");
-
-        } catch (SesException e) {
-            System.err.println("Erro ao enviar email via AWS SES API: " + e.awsErrorDetails().errorMessage());
-            throw new MessagingException("Erro ao enviar email via AWS SES API: " + e.awsErrorDetails().errorMessage(), e);
-        } catch (jakarta.mail.MessagingException | IOException e) {
-            System.err.println("Erro ao preparar email para AWS SES API: " + e.getMessage());
-            throw new MessagingException("Erro ao preparar email para AWS SES API: " + e.getMessage(), e);
-        } catch (Exception e) {
-            System.err.println("Erro ao enviar via AWS SES API: " + e.getMessage());
-            e.printStackTrace();
-            throw new MessagingException("Erro ao enviar via AWS SES API: " + e.getMessage(), e);
         }
     }
 
@@ -911,12 +919,12 @@ public class EmailService {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h2>Recibo de Pagamento - Pró-Labore</h2>
+                            <h2>Recibo Eletronico - Pró-Labore</h2>
                         </div>
                         <div class="content">
                             <p>%s,</p>
                             
-                            <p>Segue em anexo o recibo de pagamento de pró-labore.</p>
+                            <p>Segue em anexo o recibo eletronico de pró-labore.</p>
                             
                             <div class="info-box">
                                 <p><strong>Prestador:</strong> %s</p>

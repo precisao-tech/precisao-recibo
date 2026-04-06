@@ -31,6 +31,10 @@ public class PdfGeracaoService {
     private static final String HTML_TEMPLATE_PATH = "templates/recibo-prolabore-formato-tabular.html";
     private static final String LOGO_PATH = "templates/precisão logo.png";
 
+    /** Título exibido no PDF (definido no Java para não depender só do HTML no classpath). */
+    private static final String PDF_TITULO_MAIUSCULO = "RECIBO ELETRONICO";
+    private static final String PDF_TITULO_DOCUMENTO = "Recibo Eletronico";
+
     private final ValorExtensoService valorExtensoService;
     private final CalculoService calculoService;
     private final HtmlToPdfService htmlToPdfService;
@@ -269,6 +273,9 @@ public class PdfGeracaoService {
                                                         String dataVencimento,
                                                         Integer numeroParcela) {
         Map<String, String> dados = new HashMap<>();
+
+        dados.put("PDF_TITULO_MAIUSCULO", PDF_TITULO_MAIUSCULO);
+        dados.put("PDF_TITULO_DOCUMENTO", PDF_TITULO_DOCUMENTO);
 
         // Data atual formatada (dd/MM/yyyy) - usada como fallback
         // Usa fuso horário do Brasil para garantir data/hora corretas

@@ -60,23 +60,16 @@ public class CpfValidacaoService {
                 // A API ReceitaWS retorna "status": "OK" para CPFs válidos
                 String status = (String) body.get("status");
                 
-                // CPF válido se status for "OK" ou se não houver erro
                 return "OK".equalsIgnoreCase(status) || 
                        (status == null && !body.containsKey("erro"));
             }
             
             return false;
         } catch (RestClientException e) {
-            // Se a API não estiver disponível (rate limit, timeout, etc), 
-            // valida apenas os dígitos verificadores como fallback
-            // Isso permite que o sistema continue funcionando mesmo sem a API
             System.err.println("Erro ao consultar API de validação de CPF (pode ser rate limit): " + e.getMessage());
-            // Retorna true se os dígitos verificadores estiverem corretos
-            // Nota: Em produção, considere usar uma API paga para validação completa
             return validarDigitosVerificadores(cpfLimpo);
         } catch (Exception e) {
             System.err.println("Erro inesperado ao validar CPF: " + e.getMessage());
-            // Em caso de erro, valida apenas os dígitos verificadores como fallback
             return validarDigitosVerificadores(cpfLimpo);
         }
     }
@@ -100,7 +93,6 @@ public class CpfValidacaoService {
             return false;
         }
 
-        // Calcula o segundo dígito verificador
         soma = 0;
         for (int i = 0; i < 10; i++) {
             soma += Character.getNumericValue(cpf.charAt(i)) * (11 - i);
